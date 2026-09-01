@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -31,7 +31,7 @@ export interface DiscoveredSkill {
 
 export interface SelectedSkill {
   identity: SkillIdentity;
-  managedSourcePath: string;
+  managedSourceRelativePath: string;
 }
 
 export interface SkillDiscoveryAdapter {
@@ -132,7 +132,12 @@ export class SkillsetService {
       }
     }
 
-    return candidates.sort((left, right) => identityKey(left.identity).localeCompare(identityKey(right.identity)));
+    const distinctCandidates = new Map(
+      candidates.map((candidate) => [identityKey(candidate.identity), candidate]),
+    );
+    return [...distinctCandidates.values()].sort((left, right) =>
+      identityKey(left.identity).localeCompare(identityKey(right.identity)),
+    );
   }
 
   public async addSkills(skills: readonly DiscoveredSkill[]): Promise<void> {
@@ -147,21 +152,35 @@ export class SkillsetService {
         continue;
       }
 
-      const managedSourcePath = path.join(
-        this.options.stateRoot,
+      const managedSourceRelativePath = path.join(
         "managed-sources",
         fingerprint(key),
-        "SKILL.md",
+      );
+      const managedSourcePath = path.join(
+        this.options.stateRoot,
+        managedSourceRelativePath,
       );
       await mkdir(path.dirname(managedSourcePath), { recursive: true });
-      await copyFile(skill.skillFilePath, managedSourcePath);
-      selectedByIdentity.set(key, { identity: skill.identity, managedSourcePath });
+      await cp(skill.identity.sourcePath, managedSourcePath, { recursive: true });
+      selectedByIdentity.set(key, { identity: skill.identity, managedSourceRelativePath });
     }
 
     await this.writeConfiguration({
       version: 1,
       selectedSkills: [...selectedByIdentity.values()],
     });
+  }
+
+  public searchSkills(
+    skills: readonly DiscoveredSkill[],
+    query: string,
+  ): DiscoveredSkill[] {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return skills.filter((skill) =>
+      [skill.identity.name, skill.identity.sourcePath].some((value) =>
+        value.toLocaleLowerCase().includes(normalizedQuery),
+      ),
+    );
   }
 
   public async selectedSkills(): Promise<SelectedSkill[]> {

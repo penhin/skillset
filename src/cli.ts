@@ -4,20 +4,22 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
+import { defaultSkillDiscoveryAdapters } from "./default-adapters.js";
 import {
   SkillsetService,
   type ExecutionEnvironment,
 } from "./skillset-service.js";
 
 interface CommandOptions {
-  command: "init" | "doctor";
+  command: "init" | "doctor" | "skills-list" | "skills-search" | "add" | "remove";
+  values: string[];
   environment: ExecutionEnvironment;
   stateRoot: string;
 }
 
 function usage(): string {
   return [
-    "Usage: skillset <init|doctor> [options]",
+    "Usage: skillset <init|doctor|skills|add|remove> [options]",
     "",
     "Options:",
     "  --environment <windows|wsl>  Execution environment to inspect.",
@@ -73,27 +75,32 @@ function windowsLocalAppData(): string {
 }
 
 function parseOptions(arguments_: string[]): CommandOptions {
-  const [command, ...flags] = arguments_;
-  if (command !== "init" && command !== "doctor") {
+  const [topLevelCommand, ...rawArguments] = arguments_;
+  if (!topLevelCommand) {
     throw new Error(usage());
   }
 
   let environment = defaultEnvironment();
   let stateRoot = defaultStateRoot(environment);
 
-  for (let index = 0; index < flags.length; index += 1) {
-    const flag = flags[index];
-    const value = flags[index + 1];
-    if ((flag !== "--environment" && flag !== "--state-root") || !value) {
+  const values: string[] = [];
+  for (let index = 0; index < rawArguments.length; index += 1) {
+    const argument = rawArguments[index];
+    if (argument !== "--environment" && argument !== "--state-root") {
+      values.push(argument);
+      continue;
+    }
+    const value = rawArguments[index + 1];
+    if (!value) {
       throw new Error(usage());
     }
 
-    if (flag === "--environment") {
+    if (argument === "--environment") {
       if (value !== "windows" && value !== "wsl") {
         throw new Error("--environment must be windows or wsl.");
       }
       environment = value;
-      if (!flags.includes("--state-root")) {
+      if (!rawArguments.includes("--state-root")) {
         stateRoot = defaultStateRoot(environment);
       }
     } else {
@@ -102,7 +109,20 @@ function parseOptions(arguments_: string[]): CommandOptions {
     index += 1;
   }
 
-  return { command, environment, stateRoot };
+  const command = resolveCommand(topLevelCommand, values);
+  return { command, values: command.startsWith("skills-") ? values.slice(1) : values, environment, stateRoot };
+}
+
+function resolveCommand(
+  topLevelCommand: string,
+  values: readonly string[],
+): CommandOptions["command"] {
+  if (topLevelCommand === "init" || topLevelCommand === "doctor" || topLevelCommand === "add" || topLevelCommand === "remove") {
+    return topLevelCommand;
+  }
+  if (topLevelCommand === "skills" && values[0] === "list") return "skills-list";
+  if (topLevelCommand === "skills" && values[0] === "search") return "skills-search";
+  throw new Error(usage());
 }
 
 export async function runCli(arguments_: string[]): Promise<void> {
@@ -118,7 +138,49 @@ export async function runCli(arguments_: string[]): Promise<void> {
     return;
   }
 
-  process.stdout.write(`${JSON.stringify(await service.doctor())}\n`);
+  if (options.command === "doctor") {
+    process.stdout.write(`${JSON.stringify(await service.doctor())}\n`);
+    return;
+  }
+
+  const adapters = defaultSkillDiscoveryAdapters();
+  if (options.command === "skills-list") {
+    process.stdout.write(`${JSON.stringify(await service.selectedSkills())}\n`);
+    return;
+  }
+
+  const candidates = await service.discoverSkills(adapters);
+  if (options.command === "skills-search") {
+    const query = options.values.join(" ");
+    if (!query) throw new Error("skills search requires a query.");
+    process.stdout.write(`${JSON.stringify(service.searchSkills(candidates, query))}\n`);
+    return;
+  }
+
+  if (options.values.length === 0) {
+    throw new Error(`${options.command} requires one or more Skill names.`);
+  }
+  if (options.command === "add") {
+    const skills = options.values.map((name) => uniqueSkillNamed(candidates, name));
+    await service.addSkills(skills);
+    process.stdout.write(`Added ${skills.length} Skill(s) to the Skillset.\n`);
+    return;
+  }
+
+  const selected = await service.selectedSkills();
+  const skills = options.values.map((name) => uniqueSkillNamed(selected, name));
+  await service.removeSkills(skills.map((skill) => skill.identity));
+  process.stdout.write(`Removed ${skills.length} Skill(s) from the Skillset.\n`);
+}
+
+function uniqueSkillNamed<T extends { identity: { name: string } }>(
+  candidates: readonly T[],
+  name: string,
+): T {
+  const matches = candidates.filter((candidate) => candidate.identity.name === name);
+  if (matches.length === 0) throw new Error(`No discovered Skill named ${name}.`);
+  if (matches.length > 1) throw new Error(`Skill name ${name} is ambiguous; use skills search to choose a source.`);
+  return matches[0];
 }
 
 if (process.argv[1]?.endsWith("cli.ts") || process.argv[1]?.endsWith("cli.js")) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -44,5 +44,32 @@ test("initializes and diagnoses a local Skillset through the CLI", async () => {
     });
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("adds and removes several discovered Skills through the CLI without changing source files", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "skillset-cli-test-"));
+  const stateRoot = path.join(workspace, "state");
+  const skillDirectory = path.join(workspace, "home", ".agents", "skills", "review");
+  await mkdir(skillDirectory, { recursive: true });
+  await writeFile(path.join(skillDirectory, "SKILL.md"), "review workflow", "utf8");
+  const environment = { ...process.env, SKILLSET_HOME: path.join(workspace, "home") };
+  const command = (arguments_: string[]) =>
+    run(process.execPath, ["--import", "tsx", "src/cli.ts", ...arguments_], { env: environment });
+
+  try {
+    await command(["init", "--state-root", stateRoot, "--environment", "windows"]);
+    const added = await command(["add", "review", "--state-root", stateRoot, "--environment", "windows"]);
+    assert.match(added.stdout, /Added 1 Skill/);
+
+    const listed = await command(["skills", "list", "--state-root", stateRoot, "--environment", "windows"]);
+    assert.equal(JSON.parse(listed.stdout).length, 1);
+
+    await command(["remove", "review", "--state-root", stateRoot, "--environment", "windows"]);
+    const afterRemoval = await command(["skills", "list", "--state-root", stateRoot, "--environment", "windows"]);
+    assert.equal(JSON.parse(afterRemoval.stdout).length, 0);
+    assert.equal(await readFile(path.join(skillDirectory, "SKILL.md"), "utf8"), "review workflow");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });

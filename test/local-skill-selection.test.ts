@@ -14,7 +14,7 @@ test("keeps same-named discovered Skills distinct and materializes selected Skil
   const stateRoot = path.join(workspace, "state");
   const codexSkills = path.join(workspace, "codex", "skills");
   const claudeSkills = path.join(workspace, "claude", "skills");
-  await writeSkill(codexSkills, "review", "Codex review workflow");
+  await writeSkill(codexSkills, "review", "Codex review workflow", "run review");
   await writeSkill(claudeSkills, "review", "Claude review workflow");
   const service = new SkillsetService({ stateRoot, environment: "windows" });
   const adapters: SkillDiscoveryAdapter[] = [
@@ -41,8 +41,12 @@ test("keeps same-named discovered Skills distinct and materializes selected Skil
       candidates.map((skill) => skill.identity),
     );
     assert.equal(
-      await readFile(selected[0].managedSourcePath, "utf8"),
+      await readFile(path.join(stateRoot, selected[0].managedSourceRelativePath, "SKILL.md"), "utf8"),
       await readFile(candidates[0].skillFilePath, "utf8"),
+    );
+    assert.equal(
+      await readFile(path.join(stateRoot, selected[1].managedSourceRelativePath, "scripts", "review.sh"), "utf8"),
+      "run review",
     );
 
     await service.removeSkills([candidates[0].identity]);
@@ -60,8 +64,17 @@ test("keeps same-named discovered Skills distinct and materializes selected Skil
   }
 });
 
-async function writeSkill(root: string, name: string, content: string): Promise<void> {
+async function writeSkill(
+  root: string,
+  name: string,
+  content: string,
+  script?: string,
+): Promise<void> {
   const skillDirectory = path.join(root, name);
   await mkdir(skillDirectory, { recursive: true });
   await writeFile(path.join(skillDirectory, "SKILL.md"), content, "utf8");
+  if (script) {
+    await mkdir(path.join(skillDirectory, "scripts"), { recursive: true });
+    await writeFile(path.join(skillDirectory, "scripts", "review.sh"), script, "utf8");
+  }
 }
