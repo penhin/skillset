@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "skillset": "./dist/cli.js"
+    "skillset": "dist/cli.js"
   },
   "files": [
     "dist",
