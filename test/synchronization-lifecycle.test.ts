@@ -74,6 +74,30 @@ test("reports drift, unavailable targets, and retains successful updates when a 
   }
 });
 
+test("retains recovery state when reset cannot restore an incomplete snapshot", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "skillset-reset-test-"));
+  const stateRoot = path.join(workspace, "state");
+  const sourceRoot = path.join(workspace, "source");
+  const targetRoot = path.join(workspace, "target");
+  await writeSkill(sourceRoot, "review", "managed");
+  await writeSkill(targetRoot, "review", "original");
+  const service = new SkillsetService({ stateRoot, environment: "windows" });
+  const source = { id: "source", skillDirectories: [sourceRoot] };
+  const target = { id: "codex", skillDirectories: [targetRoot] };
+  try {
+    await service.initialize();
+    await service.addSkills(await service.discoverSkills([source]));
+    await service.setTargetAgents([target.id]);
+    await service.synchronize([target]);
+    await rm(path.join(stateRoot, "environments", "windows", "snapshots", target.id, "review"), { recursive: true, force: true });
+    const reset = await service.reset([target]);
+    assert.equal(reset.targets[0].status, "failed");
+    assert.equal((await service.doctor()).hasSkillset, true);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 async function writeSkill(root: string, name: string, content: string): Promise<void> {
   const directory = path.join(root, name);
   await mkdir(directory, { recursive: true });

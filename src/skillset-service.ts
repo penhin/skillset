@@ -414,6 +414,9 @@ export class SkillsetService {
     }
     await this.writeConfiguration({ ...configuration, selectedSkills: [] });
     const result = await this.synchronize(adapters);
+    if (result.targets.some((target) => target.status === "failed" || target.status === "unavailable")) {
+      return result;
+    }
     await rm(this.options.stateRoot, { recursive: true, force: true });
     return result;
   }
