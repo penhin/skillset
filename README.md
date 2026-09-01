@@ -2,6 +2,29 @@
 
 Skillset is a local CLI for configuring a shared collection of agent skills across supported Coding Agents.
 
+## Install
+
+Install the published CLI globally with npm:
+
+```powershell
+npm install -g @penhin/skillset
+```
+
+Then initialize a Skillset and inspect the Coding Agents discovered on your machine:
+
+```powershell
+skillset init
+skillset agents list
+```
+
+For example, to use Skills from the `penhin/shared-agent-skills` repository:
+
+```powershell
+skillset remote configure https://github.com/penhin/shared-agent-skills.git --skills-path .agents/skills
+skillset agents add codex
+skillset sync
+```
+
 ## Development
 
 ```powershell
