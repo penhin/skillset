@@ -256,14 +256,20 @@ export class SkillsetService {
     return (await this.readConfiguration()).targetAgentIds;
   }
 
-  public async configureRemote(url: string, skillsPath = "."): Promise<RemoteStatus> {
+  public async configureRemote(url: string, skillsPath?: string): Promise<RemoteStatus> {
     const configuration = await this.readConfiguration();
     if (configuration.remote) throw new Error("A Remote Skills Repository is already configured. Reset it before configuring another.");
+    if (skillsPath !== undefined) normalizeRemoteSkillsPath(skillsPath);
     const sourcePath = path.join(this.options.stateRoot, "remote-source");
     await runGit(["clone", "--quiet", url, sourcePath]);
     const revision = await gitRevision(sourcePath);
-    const remote = { url, revision, sourcePath, skillsPath: normalizeRemoteSkillsPath(skillsPath) };
     const shared = await readConfigurationFile(path.join(sourcePath, "skillset.json")).catch((error: unknown) => isMissingFile(error) ? undefined : Promise.reject(error));
+    const remote = {
+      url,
+      revision,
+      sourcePath,
+      skillsPath: normalizeRemoteSkillsPath(skillsPath ?? shared?.remote?.skillsPath ?? "."),
+    };
     const skills = await this.discoverSkills([{ id: "remote", skillDirectories: [remoteSkillRoot(remote)] }]);
     const selectedSkills = shared
       ? hydrateRemoteSkills(shared.selectedSkills, remoteSkillRoot(remote))

@@ -73,6 +73,20 @@ test("discovers Skills from a configured nested remote Skills path", async () =>
 
     assert.equal(remote.skillsPath, ".agents/skills");
     assert.equal((await service.selectedSkills())[0].identity.name, "review");
+    const secondDevice = new SkillsetService({ stateRoot: path.join(workspace, "second-device"), environment: "windows" });
+    await secondDevice.initialize();
+    await secondDevice.configureRemote(remoteRepository);
+    assert.match((await secondDevice.selectedSkills())[0].identity.sourcePath, /\.agents[\\/]skills[\\/]review$/);
+    const cliStateRoot = path.join(workspace, "cli-state");
+    await run(process.execPath, ["--import", "tsx", "src/cli.ts", "init", "--state-root", cliStateRoot, "--environment", "windows"]);
+    const configuredByCli = await run(process.execPath, ["--import", "tsx", "src/cli.ts", "remote", "configure", remoteRepository, "--skills-path", ".agents/skills", "--state-root", cliStateRoot, "--environment", "windows"]);
+    assert.equal(JSON.parse(configuredByCli.stdout).skillsPath, ".agents/skills");
+    const invalidPathService = new SkillsetService({ stateRoot: path.join(workspace, "invalid-path"), environment: "windows" });
+    await invalidPathService.initialize();
+    await assert.rejects(
+      invalidPathService.configureRemote(remoteRepository, "../outside"),
+      /relative path inside/i,
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
