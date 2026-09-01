@@ -24,6 +24,21 @@ Use `--environment windows|wsl` and `--state-root <path>` to inspect a specific 
 
 `skillset init` creates the Shared Skillset configuration and state for the current Execution environment. `doctor` reports whether both are ready.
 
+### Built-in adapter conventions
+
+| Supported Coding Agent | Personal Skill directory (under the home directory) |
+| --- | --- |
+| Codex, Pi | `.agents/skills` |
+| Claude Code | `.claude/skills` |
+| Gemini CLI | `.gemini/skills` |
+| GitHub Copilot CLI | `.copilot/skills` |
+| Cursor | `.cursor/skills` |
+| OpenCode | `.config/opencode/skills` |
+| Cline | `.cline/skills` |
+| Roo Code | `.roo/skills` |
+| Windsurf | `.codeium/windsurf/skills` |
+| Hermes Agent | `.hermes/skills` |
+
 `skillset agents list` shows every built-in Supported Coding Agent and whether it is a Target Coding Agent. Use `agents add <id...>` and `agents remove <id...>` to choose targets. No targets are selected by default. V1 adapters are Codex, Claude Code, Gemini CLI, GitHub Copilot CLI, Cursor, Pi, OpenCode, Cline, Roo Code, Windsurf, and Hermes Agent.
 
 `skillset skills list` discovers Skills only in those adapter directories. `skills search <query>` filters them; `add <name...>` selects and materializes Local managed sources; `remove <name...>` changes desired selection only. For duplicate names, use `name@sourcePath`.

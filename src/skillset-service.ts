@@ -300,7 +300,9 @@ export class SkillsetService {
     const selectedSkills = [...retainedLocalSkills, ...retainedRemoteSkills];
     const remote = { ...configuration.remote, revision: preview.availableRevision };
     await this.writeConfiguration({ ...configuration, remote, selectedSkills });
-    return remote;
+    const committedRemote = { ...remote, revision: await gitRevision(remote.sourcePath) };
+    await writeFile(this.configurationPath, `${JSON.stringify({ ...configuration, selectedSkills, remote: committedRemote }, null, 2)}\n`, "utf8");
+    return committedRemote;
   }
 
   public async resolveMissingRemoteSkill(identity: SkillIdentity, resolution: "remove" | "retain"): Promise<void> {
@@ -393,6 +395,12 @@ export class SkillsetService {
   public async reset(adapters: readonly SkillDiscoveryAdapter[], options: { dryRun?: boolean } = {}): Promise<SynchronizationResult> {
     const configuration = await this.readConfiguration();
     if (options.dryRun) return this.synchronizeConfiguration(adapters, { ...configuration, selectedSkills: [] }, options);
+    const selected = new Set(configuration.targetAgentIds);
+    const availableIds = new Set(await this.discoverAvailableTargetAgents(adapters));
+    const unavailable = adapters.filter((adapter) => selected.has(adapter.id) && !availableIds.has(adapter.id));
+    if (unavailable.length > 0) {
+      throw new Error(`Cannot reset while Target Coding Agents are unavailable: ${unavailable.map((adapter) => adapter.id).join(", ")}. Their Original-state snapshots are preserved for restoration.`);
+    }
     await this.writeConfiguration({ ...configuration, selectedSkills: [] });
     const result = await this.synchronize(adapters);
     await rm(this.options.stateRoot, { recursive: true, force: true });
