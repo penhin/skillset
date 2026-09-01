@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROTOTYPE · Skillset 可逆部署</title>
+  <style>
+    :root { --ink:#253044; --muted:#667085; --paper:#f7f8fb; --panel:#fff; --line:#d9deea; --blue:#2458e6; --mint:#bcebd6; --amber:#ffc96b; --danger:#c7354b; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:linear-gradient(135deg,#edf2ff 0%,var(--paper) 48%,#eefbf4 100%); font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { max-width:1180px; margin:0 auto; padding:36px 20px 60px; }
+    .flag { display:inline-block; margin-bottom:12px; padding:5px 9px; border:1px solid #9eb6ff; border-radius:999px; color:#183fbc; background:#e8edff; font:700 11px/1 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.09em; }
+    h1 { margin:0; max-width:780px; font-size:clamp(31px,5vw,58px); letter-spacing:-.055em; line-height:.97; }
+    .lede { max-width:760px; color:#45536a; font-size:17px; line-height:1.65; }
+    .notice { margin:24px 0; padding:13px 16px; border-left:4px solid var(--amber); background:#fff9ea; color:#655019; font-size:14px; }
+    .grid { display:grid; grid-template-columns:minmax(260px,.82fr) minmax(420px,1.6fr); gap:18px; align-items:start; }
+    .panel { background:rgba(255,255,255,.86); border:1px solid var(--line); box-shadow:0 12px 30px rgba(39,54,86,.06); }
+    .controls { position:sticky; top:18px; padding:20px; }
+    h2 { margin:0 0 8px; font-size:17px; letter-spacing:-.02em; }
+    .hint { margin:0 0 16px; color:var(--muted); font-size:13px; line-height:1.5; }
+    button { width:100%; margin:5px 0; padding:11px 12px; border:1px solid #bdc8e4; border-radius:7px; color:#20335f; background:#fff; font:600 14px/1.2 inherit; text-align:left; cursor:pointer; }
+    button:hover { border-color:var(--blue); background:#f3f6ff; } button:focus-visible { outline:3px solid #95b5ff; outline-offset:2px; }
+    .primary { border-color:#1848ce; color:#fff; background:var(--blue); } .primary:hover { background:#173fae; }
+    .danger { color:#9f1b32; border-color:#efbcc6; background:#fff7f8; } .danger:hover { background:#ffecef; }
+    .rule { height:1px; margin:15px 0; background:var(--line); }
+    .walkthrough { padding:20px; }
+    .tabs { display:flex; gap:7px; flex-wrap:wrap; margin:14px 0; } .tab { width:auto; margin:0; padding:8px 10px; font-size:12px; } .tab.active { border-color:#1b4ed9; color:#1742b7; background:#e9efff; }
+    .scenario { min-height:120px; padding:15px; border:1px dashed #b8c2d9; background:#fafcff; } .scenario p { margin:0 0 13px; color:#516078; font-size:14px; line-height:1.55; } .scenario button { margin-bottom:0; }
+    .state { padding:20px; }
+    .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin:14px 0 18px; } .metric { padding:12px; background:#f5f7fc; border-left:3px solid #9dafd9; } .metric strong { display:block; font-size:24px; letter-spacing:-.04em; } .metric span { color:var(--muted); font-size:12px; }
+    .agent-list { display:grid; gap:10px; } .agent { padding:15px; border:1px solid var(--line); background:#fff; } .agent-head { display:flex; justify-content:space-between; align-items:center; gap:10px; } .agent h3 { margin:0; font-size:16px; } .badge { padding:4px 7px; border-radius:999px; font:700 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.04em; } .target { color:#075f48; background:#daf5e9; } .waiting { color:#615779; background:#eeeafa; }
+    .skill { display:grid; grid-template-columns:110px 1fr; gap:10px; margin-top:10px; padding-top:10px; border-top:1px solid #edf0f5; font-size:13px; } .skill-name { font-weight:700; } .origin { color:#556178; line-height:1.45; } .managed { color:#0c6a50; } .local { color:#57637a; }
+    .trail { margin-top:10px; padding:9px 10px; color:#496077; background:#f2f7ff; border-left:3px solid #6e97ef; font-size:12px; line-height:1.45; }
+    .events { margin-top:18px; padding:14px; border:1px solid #d5eadf; background:#f5fdf8; } .events h3 { margin:0 0 7px; font-size:13px; } .events ol { margin:0; padding-left:19px; color:#3d5b4a; font-size:12px; line-height:1.65; }
+    @media (max-width:820px) { .grid { grid-template-columns:1fr; } .controls { position:static; } .summary { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="flag">THROWAWAY LOGIC PROTOTYPE</div>
+  <h1>Skillset 的“加入、覆盖、移除、恢复”是否真的可逆？</h1>
+  <p class="lede">这个实验不修改真实文件。它模拟两个目标 Coding Agent 原本都拥有 <b>review</b>，再由共同 Skillset 覆盖、发生本机漂移、最后移除并恢复原始内容的全过程。</p>
+  <div class="notice">要验证的状态模型：受管 skill 覆盖同名 skill 前必须保留逐 agent 快照；移除 Skillset 后恢复快照，而不会删除无关的本地 skills。</div>
+  <div class="grid">
+    <section class="panel controls" aria-label="自由操作">
+      <h2>自由操作</h2><p class="hint">每次点击都会更新右侧完整状态。先试“同步受管 review”，再试“移除并恢复”。</p>
+      <button class="primary" data-action="sync">同步受管 review 到目标 agent</button>
+      <button data-action="drift">手工修改 Codex 的受管 review（模拟漂移）</button>
+      <button class="danger" data-action="remove">从 Skillset 移除 review，并恢复原始 skill</button>
+      <div class="rule"></div>
+      <button data-action="toggleGemini">切换 Gemini 为目标 agent</button>
+      <button data-action="reset">重置整个实验</button>
+      <div class="rule"></div>
+      <h2>引导走查</h2><p class="hint">每个走查都从一致的初始状态开始。</p>
+      <div id="tabs" class="tabs"></div><div id="scenario" class="scenario"></div>
+    </section>
+    <section class="panel state" aria-live="polite">
+      <h2>当前 Skillset 状态</h2><p id="last" class="hint"></p>
+      <div id="summary" class="summary"></div><div id="agents" class="agent-list"></div><div id="events" class="events"></div>
+    </section>
+  </div>
+</main>
+<script>
+  // Pure state module: no DOM access; the page is only a shell around this reducer.
+  const managedReview = { name: 'review', content: '远端统一评审流程 · v2', source: 'Skillset 受管来源' };
+  const seed = () => ({
+    targets: new Set(['codex', 'claude']), selected: new Set(['review']), managed: new Set(), snapshots: {},
+    agents: {
+      codex: { name:'Codex', skills:{ review:{content:'Codex 原有评审清单', origin:'本地 Skill'}, lint:{content:'Codex 本地 lint 规则', origin:'本地 Skill'} } },
+      claude: { name:'Claude Code', skills:{ review:{content:'Claude 原有评审清单', origin:'本地 Skill'}, release:{content:'Claude 发布步骤', origin:'本地 Skill'} } },
+      gemini: { name:'Gemini CLI', skills:{ notes:{content:'Gemini 项目笔记', origin:'本地 Skill'} } }
+    }, events:['实验已初始化：Codex 和 Claude Code 原本各有一个不同的 review。'], last:'尚未同步任何受管 skill。'
+  });
+  const clone = value => structuredClone(value);
+  function reduce(current, action) {
+    const state = clone(current); state.targets = new Set(state.targets); state.selected = new Set(state.selected); state.managed = new Set(state.managed);
+    const record = text => { state.events.unshift(text); state.events = state.events.slice(0, 7); state.last = text; };
+    if (action.type === 'RESET') return seed();
+    if (action.type === 'TOGGLE_GEMINI') { state.targets.has('gemini') ? state.targets.delete('gemini') : state.targets.add('gemini'); record(`Gemini CLI ${state.targets.has('gemini') ? '已加入' : '已移出'}目标 agent。`); return state; }
+    if (action.type === 'SYNC') {
+      if (!state.selected.has('review')) { record('无法同步：review 尚未属于 Skillset。'); return state; }
+      for (const id of state.targets) {
+        const agent = state.agents[id]; const existing = agent.skills.review;
+        if (!state.snapshots[id]) state.snapshots[id] = {};
+        if (existing && !state.snapshots[id].review) state.snapshots[id].review = clone(existing);
+        agent.skills.review = { content:managedReview.content, origin:'受管 Skill', source:managedReview.source };
+      }
+      state.managed.add('review'); record('已同步 review：首次覆盖的原有 skill 已分别写入快照。'); return state;
+    }
+    if (action.type === 'DRIFT') {
+      const review = state.agents.codex.skills.review;
+      if (!review || review.origin !== '受管 Skill') { record('无法模拟漂移：请先同步受管 review。'); return state; }
+      review.content = 'Codex 手工改写的 review（漂移）'; record('已模拟 Codex 受管 review 的本机漂移。'); return state;
+    }
+    if (action.type === 'REMOVE') {
+      if (!state.managed.has('review')) { record('无需移除：review 当前并未部署为受管 skill。'); return state; }
+      for (const id of state.targets) {
+        const agent = state.agents[id]; const saved = state.snapshots[id]?.review;
+        if (saved) agent.skills.review = saved; else delete agent.skills.review;
+        if (state.snapshots[id]) delete state.snapshots[id].review;
+      }
+      state.managed.delete('review'); state.selected.delete('review'); record('已移除受管 review：有快照的 agent 恢复原始内容；没有原始 review 的 agent 则移除该项。'); return state;
+    }
+    return state;
+  }
+  let state = seed();
+  const walkthroughs = [
+    { title:'恢复原状', description:'观察两个 agent 的不同原始 review 如何被同一受管内容覆盖，最后分别恢复。', steps:[['同步受管 review','SYNC'],['移除并恢复','REMOVE']] },
+    { title:'漂移也恢复', description:'即使 Codex 在同步后被手工改写，移除时仍应恢复最初快照，而不是保留漂移。', steps:[['同步受管 review','SYNC'],['模拟 Codex 漂移','DRIFT'],['移除并恢复','REMOVE']] },
+    { title:'没有原始 skill', description:'把 Gemini 加为目标。它原本没有 review，所以移除后不应凭空留下 review；它的 notes 也不应受影响。', steps:[['加入 Gemini','TOGGLE_GEMINI'],['同步受管 review','SYNC'],['移除并恢复','REMOVE']] }
+  ]; let active = 0, step = 0;
+  const dispatch = type => { state = reduce(state, {type}); render(); };
+  function render() {
+    document.getElementById('last').textContent = state.last;
+    document.getElementById('summary').innerHTML = [
+      ['目标 agent', state.targets.size], ['受管 skills', state.managed.size], ['原始快照', Object.values(state.snapshots).reduce((n,x)=>n+Object.keys(x).length,0)]
+    ].map(([label,value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
+    document.getElementById('agents').innerHTML = Object.entries(state.agents).map(([id,agent]) => {
+      const target = state.targets.has(id); const skillRows = Object.entries(agent.skills).map(([name,skill]) => `<div class="skill"><div class="skill-name">${name}</div><div class="origin ${skill.origin === '受管 Skill' ? 'managed' : 'local'}"><b>${skill.origin}</b><br>${skill.content}</div></div>`).join('');
+      const snap = state.snapshots[id]?.review; const trail = snap ? `<div class="trail">恢复轨迹：<b>${snap.content}</b> → 当前受管版本；移除时会回到左侧原始内容。</div>` : `<div class="trail">没有待恢复的 review 快照。</div>`;
+      return `<article class="agent"><div class="agent-head"><h3>${agent.name}</h3><span class="badge ${target?'target':'waiting'}">${target?'目标 agent':'未选中'}</span></div>${skillRows}${trail}</article>`;
+    }).join('');
+    document.getElementById('events').innerHTML = `<h3>最近状态变化</h3><ol>${state.events.map(e=>`<li>${e}</li>`).join('')}</ol>`;
+    document.getElementById('tabs').innerHTML = walkthroughs.map((s,i)=>`<button class="tab ${i===active?'active':''}" data-tab="${i}">${s.title}</button>`).join('');
+    const flow = walkthroughs[active]; const done = step >= flow.steps.length;
+    document.getElementById('scenario').innerHTML = `<p><b>${flow.title}</b>：${flow.description}</p><button class="primary" data-walk="true">${done ? '重新开始此走查' : `第 ${step+1} 步：${flow.steps[step][0]}`}</button>`;
+  }
+  document.addEventListener('click', event => {
+    const action = event.target.dataset.action; if (action) { const map={sync:'SYNC',drift:'DRIFT',remove:'REMOVE',toggleGemini:'TOGGLE_GEMINI',reset:'RESET'}; if(action==='reset'){active=0;step=0;} dispatch(map[action]); }
+    if (event.target.dataset.tab !== undefined) { active=Number(event.target.dataset.tab); step=0; state=seed(); render(); }
+    if (event.target.dataset.walk) { const flow=walkthroughs[active]; if(step>=flow.steps.length){state=seed();step=0;} else { state=reduce(state,{type:flow.steps[step][1]}); step++; } render(); }
+  });
+  render();
+</script>
+</body>
+</html>
