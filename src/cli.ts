@@ -2,6 +2,7 @@
 
 import os from "node:os";
 import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import path from "node:path";
 
 import { defaultSkillDiscoveryAdapters } from "./default-adapters.js";
@@ -11,19 +12,23 @@ import {
 } from "./skillset-service.js";
 
 interface CommandOptions {
-  command: "init" | "doctor" | "skills-list" | "skills-search" | "add" | "remove";
+  command: "init" | "doctor" | "skills-list" | "skills-search" | "add" | "remove" | "agents-list" | "agents-add" | "agents-remove" | "remote-configure" | "remote-list" | "remote-update" | "remote-resolve" | "status" | "sync" | "reset";
   values: string[];
   environment: ExecutionEnvironment;
   stateRoot: string;
+  dryRun: boolean;
+  yes: boolean;
 }
 
 function usage(): string {
   return [
-    "Usage: skillset <init|doctor|skills|add|remove> [options]",
+    "Usage: skillset <init|doctor|agents|skills|add|remove|remote|status|sync|reset> [options]",
     "",
     "Options:",
     "  --environment <windows|wsl>  Execution environment to inspect.",
     "  --state-root <path>           Local Skillset state directory.",
+    "  --dry-run                     Show synchronization actions without writing.",
+    "  --yes                         Confirm a destructive operation.",
   ].join("\n");
 }
 
@@ -82,10 +87,14 @@ function parseOptions(arguments_: string[]): CommandOptions {
 
   let environment = defaultEnvironment();
   let stateRoot = defaultStateRoot(environment);
+  let dryRun = false;
+  let yes = false;
 
   const values: string[] = [];
   for (let index = 0; index < rawArguments.length; index += 1) {
     const argument = rawArguments[index];
+    if (argument === "--dry-run") { dryRun = true; continue; }
+    if (argument === "--yes") { yes = true; continue; }
     if (argument !== "--environment" && argument !== "--state-root") {
       values.push(argument);
       continue;
@@ -110,18 +119,25 @@ function parseOptions(arguments_: string[]): CommandOptions {
   }
 
   const command = resolveCommand(topLevelCommand, values);
-  return { command, values: command.startsWith("skills-") ? values.slice(1) : values, environment, stateRoot };
+  return { command, values: command.startsWith("skills-") || command.startsWith("agents-") || command.startsWith("remote-") ? values.slice(1) : values, environment, stateRoot, dryRun, yes };
 }
 
 function resolveCommand(
   topLevelCommand: string,
   values: readonly string[],
 ): CommandOptions["command"] {
-  if (topLevelCommand === "init" || topLevelCommand === "doctor" || topLevelCommand === "add" || topLevelCommand === "remove") {
+  if (topLevelCommand === "init" || topLevelCommand === "doctor" || topLevelCommand === "add" || topLevelCommand === "remove" || topLevelCommand === "status" || topLevelCommand === "sync" || topLevelCommand === "reset") {
     return topLevelCommand;
   }
   if (topLevelCommand === "skills" && values[0] === "list") return "skills-list";
   if (topLevelCommand === "skills" && values[0] === "search") return "skills-search";
+  if (topLevelCommand === "agents" && values[0] === "list") return "agents-list";
+  if (topLevelCommand === "agents" && values[0] === "add") return "agents-add";
+  if (topLevelCommand === "agents" && values[0] === "remove") return "agents-remove";
+  if (topLevelCommand === "remote" && values[0] === "configure") return "remote-configure";
+  if (topLevelCommand === "remote" && values[0] === "list") return "remote-list";
+  if (topLevelCommand === "remote" && values[0] === "update") return "remote-update";
+  if (topLevelCommand === "remote" && values[0] === "resolve") return "remote-resolve";
   throw new Error(usage());
 }
 
@@ -144,8 +160,72 @@ export async function runCli(arguments_: string[]): Promise<void> {
   }
 
   const adapters = defaultSkillDiscoveryAdapters();
+  if (options.command === "remote-configure") {
+    if (options.values.length !== 1) throw new Error("remote configure requires one repository URL or path.");
+    process.stdout.write(`${JSON.stringify(await service.configureRemote(options.values[0]))}\n`);
+    return;
+  }
+  if (options.command === "remote-list") {
+    process.stdout.write(`${JSON.stringify(await service.remoteStatus())}\n`);
+    return;
+  }
+  if (options.command === "remote-update") {
+    const preview = await service.previewRemoteUpdate();
+    if (!options.yes) { process.stdout.write(`${JSON.stringify(preview)}\n`); return; }
+    process.stdout.write(`${JSON.stringify(await service.updateRemote())}\n`);
+    return;
+  }
+  if (options.command === "remote-resolve") {
+    const [name, resolution] = options.values;
+    if (!name || (resolution !== "remove" && resolution !== "retain")) throw new Error("remote resolve requires <Skill name> <remove|retain>.");
+    const skill = uniqueSkillNamed(await service.selectedSkills(), name);
+    await service.resolveMissingRemoteSkill(skill.identity, resolution);
+    process.stdout.write(`Recorded ${resolution} decision for ${name}.\n`);
+    return;
+  }
+  if (options.command === "agents-list") {
+    const selected = new Set(await service.selectedTargetAgents());
+    const available = new Set(await service.discoverAvailableTargetAgents(adapters));
+    process.stdout.write(`${JSON.stringify(adapters.filter((adapter) => available.has(adapter.id) || selected.has(adapter.id)).map((adapter) => ({ id: adapter.id, selected: selected.has(adapter.id), available: available.has(adapter.id) })))}\n`);
+    return;
+  }
+  if (options.command === "agents-add" || options.command === "agents-remove") {
+    if (options.values.length === 0) throw new Error(`agents ${options.command === "agents-add" ? "add" : "remove"} requires one or more agent IDs.`);
+    const validIds = new Set(adapters.map((adapter) => adapter.id));
+    const availableIds = new Set(await service.discoverAvailableTargetAgents(adapters));
+    for (const id of options.values) {
+      if (!validIds.has(id)) throw new Error(`Unsupported Coding Agent: ${id}.`);
+      if (options.command === "agents-add" && !availableIds.has(id)) throw new Error(`Coding Agent ${id} is not discovered in this Execution environment.`);
+    }
+    const selected = new Set(await service.selectedTargetAgents());
+    for (const id of options.values) options.command === "agents-add" ? selected.add(id) : selected.delete(id);
+    await service.setTargetAgents([...selected]);
+    process.stdout.write(`${options.command === "agents-add" ? "Selected" : "Removed"} ${options.values.length} Target Coding Agent(s).\n`);
+    return;
+  }
+  if (options.command === "status") {
+    process.stdout.write(`${JSON.stringify(await service.status(adapters))}\n`);
+    return;
+  }
+  if (options.command === "sync" || options.command === "reset") {
+    const preview = options.command === "reset" ? await service.reset(adapters, { dryRun: true }) : await service.synchronize(adapters, { dryRun: true });
+    if (options.dryRun) { process.stdout.write(`${JSON.stringify(preview)}\n`); return; }
+    if (!options.yes && !(await confirm("Apply this synchronization plan? [y/N] "))) {
+      process.stdout.write("Synchronization cancelled.\n");
+      return;
+    }
+    const result = options.command === "reset" ? await service.reset(adapters) : await service.synchronize(adapters);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   if (options.command === "skills-list") {
-    process.stdout.write(`${JSON.stringify(await service.selectedSkills())}\n`);
+    const selectedKeys = new Set(
+      (await service.selectedSkills()).map((skill) => JSON.stringify(skill.identity)),
+    );
+    const candidates = await service.discoverSkills(adapters);
+    process.stdout.write(
+      `${JSON.stringify(candidates.map((skill) => ({ ...skill, selected: selectedKeys.has(JSON.stringify(skill.identity)) })))}\n`,
+    );
     return;
   }
 
@@ -173,13 +253,25 @@ export async function runCli(arguments_: string[]): Promise<void> {
   process.stdout.write(`Removed ${skills.length} Skill(s) from the Skillset.\n`);
 }
 
-function uniqueSkillNamed<T extends { identity: { name: string } }>(
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try { return (await prompt.question(question)).trim().toLocaleLowerCase() === "y"; }
+  finally { prompt.close(); }
+}
+
+function uniqueSkillNamed<T extends { identity: { name: string; sourcePath: string } }>(
   candidates: readonly T[],
   name: string,
 ): T {
-  const matches = candidates.filter((candidate) => candidate.identity.name === name);
+  const [skillName, sourcePath] = name.split("@", 2);
+  const matches = candidates.filter(
+    (candidate) =>
+      candidate.identity.name === skillName &&
+      (sourcePath === undefined || candidate.identity.sourcePath === sourcePath),
+  );
   if (matches.length === 0) throw new Error(`No discovered Skill named ${name}.`);
-  if (matches.length > 1) throw new Error(`Skill name ${name} is ambiguous; use skills search to choose a source.`);
+  if (matches.length > 1) throw new Error(`Skill name ${name} is ambiguous; use name@sourcePath from skills search.`);
   return matches[0];
 }
 

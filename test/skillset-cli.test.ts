@@ -63,11 +63,11 @@ test("adds and removes several discovered Skills through the CLI without changin
     assert.match(added.stdout, /Added 1 Skill/);
 
     const listed = await command(["skills", "list", "--state-root", stateRoot, "--environment", "windows"]);
-    assert.equal(JSON.parse(listed.stdout).length, 1);
+    assert.equal(JSON.parse(listed.stdout)[0].selected, true);
 
     await command(["remove", "review", "--state-root", stateRoot, "--environment", "windows"]);
     const afterRemoval = await command(["skills", "list", "--state-root", stateRoot, "--environment", "windows"]);
-    assert.equal(JSON.parse(afterRemoval.stdout).length, 0);
+    assert.equal(JSON.parse(afterRemoval.stdout)[0].selected, false);
     assert.equal(await readFile(path.join(skillDirectory, "SKILL.md"), "utf8"), "review workflow");
   } finally {
     await rm(workspace, { recursive: true, force: true });
