@@ -13,6 +13,7 @@ const run = promisify(execFile);
 test("configures a Remote Skills Repository through Git and selects its Skills", async () => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "skillset-remote-test-"));
   const repository = path.join(workspace, "repository");
+  const remoteRepository = path.join(workspace, "remote.git");
   const stateRoot = path.join(workspace, "state");
   try {
     await run("git", ["init", "--quiet", repository]);
@@ -22,15 +23,20 @@ test("configures a Remote Skills Repository through Git and selects its Skills",
     await writeFile(path.join(repository, "review", "SKILL.md"), "remote review", "utf8");
     await run("git", ["add", "."], { cwd: repository });
     await run("git", ["commit", "--quiet", "-m", "initial skills"], { cwd: repository });
+    await run("git", ["init", "--bare", "--quiet", remoteRepository]);
+    await run("git", ["remote", "add", "origin", remoteRepository], { cwd: repository });
+    await run("git", ["push", "--quiet", "-u", "origin", "HEAD"], { cwd: repository });
 
     const service = new SkillsetService({ stateRoot, environment: "windows" });
     await service.initialize();
-    const remote = await service.configureRemote(repository);
+    const remote = await service.configureRemote(remoteRepository);
 
-    assert.equal(remote.url, repository);
+    assert.equal(remote.url, remoteRepository);
     assert.match(remote.revision, /^[0-9a-f]{40}$/);
     assert.equal((await service.selectedSkills()).length, 1);
-    assert.equal(JSON.parse(await readFile(path.join(remote.sourcePath, "skillset.json"), "utf8")).remote.revision, remote.revision);
+    const shared = JSON.parse(await readFile(path.join(remote.sourcePath, "skillset.json"), "utf8"));
+    assert.equal(shared.remote.sourcePath, ".");
+    assert.equal(shared.selectedSkills[0].source, "remote");
     assert.deepEqual(await service.previewRemoteUpdate(), {
       currentRevision: remote.revision,
       availableRevision: remote.revision,

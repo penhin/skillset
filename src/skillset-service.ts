@@ -35,7 +35,8 @@ export interface DiscoveredSkill {
 
 export interface SelectedSkill {
   identity: SkillIdentity;
-  managedSourceRelativePath: string;
+  source: "local" | "remote";
+  managedSourceRelativePath?: string;
 }
 
 export interface SkillDiscoveryAdapter {
@@ -201,7 +202,7 @@ export class SkillsetService {
       );
       await mkdir(path.dirname(managedSourcePath), { recursive: true });
       await cp(skill.identity.sourcePath, managedSourcePath, { recursive: true });
-      selectedByIdentity.set(key, { identity: skill.identity, managedSourceRelativePath });
+      selectedByIdentity.set(key, { identity: skill.identity, source: "local", managedSourceRelativePath });
     }
 
     await this.writeConfiguration({
@@ -256,11 +257,15 @@ export class SkillsetService {
     await runGit(["clone", "--quiet", url, sourcePath]);
     const revision = await gitRevision(sourcePath);
     const remote = { url, revision, sourcePath };
+    const shared = await readConfigurationFile(path.join(sourcePath, "skillset.json")).catch((error: unknown) => isMissingFile(error) ? undefined : Promise.reject(error));
     const skills = await this.discoverSkills([{ id: "remote", skillDirectories: [sourcePath] }]);
-    await this.addSkills(skills);
-    const updated = await this.readConfiguration();
-    await this.writeConfiguration({ ...updated, remote });
-    return remote;
+    const selectedSkills = shared
+      ? hydrateRemoteSkills(shared.selectedSkills, sourcePath)
+      : skills.map((skill) => ({ identity: skill.identity, source: "remote" as const }));
+    await this.writeConfiguration({ ...configuration, ...shared, selectedSkills, remote });
+    const committedRemote = { ...remote, revision: await gitRevision(sourcePath) };
+    await writeFile(this.configurationPath, `${JSON.stringify({ ...configuration, ...shared, selectedSkills, remote: committedRemote }, null, 2)}\n`, "utf8");
+    return committedRemote;
   }
 
   public async remoteStatus(): Promise<RemoteStatus | undefined> {
@@ -286,18 +291,15 @@ export class SkillsetService {
     const missing = configuration.selectedSkills.filter((skill) => skill.identity.sourcePath.startsWith(configuration.remote!.sourcePath) && !candidatesByName.has(skill.identity.name));
     const unresolved = missing.filter((skill) => !configuration.missingSourceResolutions[identityKey(skill.identity)]);
     if (unresolved.length > 0) throw new Error(`Selected remote Skills are missing: ${unresolved.map((skill) => skill.identity.name).join(", ")}. Record remove or retain decisions first.`);
-    await this.addSkills(candidates);
-    const materialized = await this.readConfiguration();
-    const materializedByIdentity = new Map(materialized.selectedSkills.map((skill) => [identityKey(skill.identity), skill]));
-    const retainedLocalSkills = configuration.selectedSkills.filter((skill) => !skill.identity.sourcePath.startsWith(configuration.remote!.sourcePath));
+    const retainedLocalSkills = configuration.selectedSkills.filter((skill) => skill.source === "local");
     const retainedRemoteSkills = configuration.selectedSkills.map((skill) => {
-      if (!skill.identity.sourcePath.startsWith(configuration.remote!.sourcePath)) return undefined;
+      if (skill.source !== "remote") return undefined;
       const replacement = candidatesByName.get(skill.identity.name);
-      return replacement ? materializedByIdentity.get(identityKey(replacement.identity)) : skill;
+      return replacement ? { identity: replacement.identity, source: "remote" as const } : skill;
     }).filter((skill): skill is SelectedSkill => skill !== undefined);
     const selectedSkills = [...retainedLocalSkills, ...retainedRemoteSkills];
     const remote = { ...configuration.remote, revision: preview.availableRevision };
-    await this.writeConfiguration({ ...materialized, remote, selectedSkills });
+    await this.writeConfiguration({ ...configuration, remote, selectedSkills });
     return remote;
   }
 
@@ -450,7 +452,7 @@ export class SkillsetService {
         await rm(target, { recursive: true, force: true });
         const selectedSkill = desired.get(action.name);
         if (!selectedSkill) throw new Error(`Selected Skill ${action.name} disappeared during synchronization.`);
-        await cp(path.join(this.options.stateRoot, ...selectedSkill.managedSourceRelativePath.split("/")), target, { recursive: true });
+        await cp(this.sourcePathFor(selectedSkill), target, { recursive: true });
         deployments[action.name].managedFingerprint = selectedSkill.identity.contentFingerprint;
       }
     }
@@ -465,9 +467,7 @@ export class SkillsetService {
 
     return {
       version: 1,
-      selectedSkills: Array.isArray(configuration.selectedSkills)
-        ? configuration.selectedSkills
-        : [],
+      selectedSkills: Array.isArray(configuration.selectedSkills) ? configuration.selectedSkills.map(normalizeSelectedSkill) : [],
       targetAgentIds: Array.isArray(configuration.targetAgentIds) ? configuration.targetAgentIds : [],
       remote: isRemoteStatus(configuration.remote) ? configuration.remote : undefined,
       missingSourceResolutions: typeof configuration.missingSourceResolutions === "object" && configuration.missingSourceResolutions !== null ? configuration.missingSourceResolutions : {},
@@ -482,8 +482,20 @@ export class SkillsetService {
       "utf8",
     );
     if (configuration.remote) {
-      await writeFile(path.join(configuration.remote.sourcePath, "skillset.json"), serialized, "utf8");
+      const shared: LocalSkillsetConfiguration = {
+        ...configuration,
+        remote: { ...configuration.remote, sourcePath: "." },
+        selectedSkills: configuration.selectedSkills.map((skill) => skill.source === "remote" ? { ...skill, identity: { ...skill.identity, sourcePath: skill.identity.name } } : skill),
+      };
+      await writeFile(path.join(configuration.remote.sourcePath, "skillset.json"), `${JSON.stringify(shared, null, 2)}\n`, "utf8");
+      await commitSharedConfiguration(configuration.remote.sourcePath);
     }
+  }
+
+  private sourcePathFor(skill: SelectedSkill): string {
+    if (skill.source === "remote") return skill.identity.sourcePath;
+    if (!skill.managedSourceRelativePath) throw new Error(`Local managed source for ${skill.identity.name} is missing.`);
+    return path.join(this.options.stateRoot, ...skill.managedSourceRelativePath.split("/"));
   }
 
   private async readSnapshots(): Promise<SnapshotState> {
@@ -513,6 +525,37 @@ async function runGit(arguments_: string[], cwd?: string): Promise<{ stdout: str
 
 async function gitRevision(directory: string, ref = "HEAD"): Promise<string> {
   return (await runGit(["rev-parse", ref], directory)).stdout.trim();
+}
+
+async function commitSharedConfiguration(directory: string): Promise<void> {
+  await runGit(["add", "skillset.json"], directory);
+  const { stdout } = await runGit(["status", "--porcelain"], directory);
+  if (!stdout.trim()) return;
+  await runGit(["-c", "user.name=Skillset", "-c", "user.email=skillset@local", "commit", "--quiet", "-m", "chore: update shared Skillset configuration"], directory);
+  await runGit(["push", "origin", "HEAD"], directory);
+}
+
+async function readConfigurationFile(filePath: string): Promise<LocalSkillsetConfiguration> {
+  const raw = await readFile(filePath, "utf8");
+  const configuration = JSON.parse(raw) as Partial<LocalSkillsetConfiguration>;
+  if (configuration.version !== 1) throw new Error("Unsupported Skillset configuration version.");
+  return {
+    version: 1,
+    selectedSkills: Array.isArray(configuration.selectedSkills) ? configuration.selectedSkills.map(normalizeSelectedSkill) : [],
+    targetAgentIds: Array.isArray(configuration.targetAgentIds) ? configuration.targetAgentIds : [],
+    remote: isRemoteStatus(configuration.remote) ? configuration.remote : undefined,
+    missingSourceResolutions: typeof configuration.missingSourceResolutions === "object" && configuration.missingSourceResolutions !== null ? configuration.missingSourceResolutions : {},
+  };
+}
+
+function normalizeSelectedSkill(skill: SelectedSkill): SelectedSkill {
+  return { ...skill, source: skill.source === "remote" ? "remote" : "local" };
+}
+
+function hydrateRemoteSkills(skills: SelectedSkill[], sourcePath: string): SelectedSkill[] {
+  return skills.map((skill) => skill.source === "remote"
+    ? { ...skill, source: "remote", identity: { ...skill.identity, sourcePath: path.join(sourcePath, skill.identity.name) } }
+    : skill);
 }
 
 function isRemoteStatus(value: unknown): value is RemoteStatus {
