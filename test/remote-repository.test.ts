@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -37,11 +37,14 @@ test("configures a Remote Skills Repository through Git and selects its Skills",
     const shared = JSON.parse(await readFile(path.join(remote.sourcePath, "skillset.json"), "utf8"));
     assert.equal(shared.remote.sourcePath, ".");
     assert.equal(shared.selectedSkills[0].source, "remote");
+    await assert.rejects(service.updateRemote(), /requires a review/i);
     assert.deepEqual(await service.previewRemoteUpdate(), {
       currentRevision: remote.revision,
       availableRevision: remote.revision,
       summary: [],
     });
+    await unlink(path.join(stateRoot, "environments", "windows", "pending-remote-review.json"));
+    await assert.rejects(service.updateRemote(), /requires a review/i);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

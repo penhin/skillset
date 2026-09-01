@@ -80,6 +80,11 @@ interface SnapshotState {
   deployments: Record<string, Record<string, { hadOriginal: boolean; managedFingerprint: string }>>;
 }
 
+interface PendingRemoteReview {
+  url: string;
+  availableRevision: string;
+}
+
 export class SkillsetService {
   private readonly configurationPath: string;
   private readonly environmentStatePath: string;
@@ -278,14 +283,20 @@ export class SkillsetService {
     await runGit(["fetch", "--quiet", "origin"], remote.sourcePath);
     const availableRevision = await gitRevision(remote.sourcePath, "@{u}");
     const { stdout } = await runGit(["log", "--oneline", `${remote.revision}..${availableRevision}`], remote.sourcePath);
+    await writeFile(path.join(this.environmentStatePath, "pending-remote-review.json"), `${JSON.stringify({ url: remote.url, availableRevision } satisfies PendingRemoteReview)}\n`, "utf8");
     return { currentRevision: remote.revision, availableRevision, summary: stdout.trim() ? stdout.trim().split("\n") : [] };
   }
 
   public async updateRemote(): Promise<RemoteStatus> {
     const configuration = await this.readConfiguration();
     if (!configuration.remote) throw new Error("No Remote Skills Repository is configured.");
-    const preview = await this.previewRemoteUpdate();
-    await runGit(["reset", "--hard", preview.availableRevision], configuration.remote.sourcePath);
+    await runGit(["fetch", "--quiet", "origin"], configuration.remote.sourcePath);
+    const availableRevision = await gitRevision(configuration.remote.sourcePath, "@{u}");
+    const review = await this.readPendingRemoteReview();
+    if (!review || review.url !== configuration.remote.url || review.availableRevision !== availableRevision) {
+      throw new Error("Remote update requires a review of the current revision. Run `remote update` without --yes, review its summary, then confirm with --yes.");
+    }
+    await runGit(["reset", "--hard", availableRevision], configuration.remote.sourcePath);
     const candidates = await this.discoverSkills([{ id: "remote", skillDirectories: [configuration.remote.sourcePath] }]);
     const candidatesByName = new Map(candidates.map((candidate) => [candidate.identity.name, candidate]));
     const missing = configuration.selectedSkills.filter((skill) => skill.identity.sourcePath.startsWith(configuration.remote!.sourcePath) && !candidatesByName.has(skill.identity.name));
@@ -298,7 +309,7 @@ export class SkillsetService {
       return replacement ? { identity: replacement.identity, source: "remote" as const } : skill;
     }).filter((skill): skill is SelectedSkill => skill !== undefined);
     const selectedSkills = [...retainedLocalSkills, ...retainedRemoteSkills];
-    const remote = { ...configuration.remote, revision: preview.availableRevision };
+    const remote = { ...configuration.remote, revision: availableRevision };
     await this.writeConfiguration({ ...configuration, remote, selectedSkills });
     const committedRemote = { ...remote, revision: await gitRevision(remote.sourcePath) };
     await writeFile(this.configurationPath, `${JSON.stringify({ ...configuration, selectedSkills, remote: committedRemote }, null, 2)}\n`, "utf8");
@@ -519,6 +530,15 @@ export class SkillsetService {
 
   private async writeSnapshots(snapshots: SnapshotState): Promise<void> {
     await writeFile(path.join(this.environmentStatePath, "snapshots.json"), `${JSON.stringify(snapshots, null, 2)}\n`, "utf8");
+  }
+
+  private async readPendingRemoteReview(): Promise<PendingRemoteReview | undefined> {
+    try {
+      return JSON.parse(await readFile(path.join(this.environmentStatePath, "pending-remote-review.json"), "utf8")) as PendingRemoteReview;
+    } catch (error) {
+      if (isMissingFile(error)) return undefined;
+      throw new Error("Invalid pending Remote Skills Repository review.", { cause: error });
+    }
   }
 }
 

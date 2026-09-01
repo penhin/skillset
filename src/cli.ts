@@ -170,9 +170,8 @@ export async function runCli(arguments_: string[]): Promise<void> {
     return;
   }
   if (options.command === "remote-update") {
-    const preview = await service.previewRemoteUpdate();
-    if (!options.yes) { process.stdout.write(`${JSON.stringify(preview)}\n`); return; }
-    process.stdout.write(`${JSON.stringify(await service.updateRemote())}\n`);
+    if (options.yes) process.stdout.write(`${JSON.stringify(await service.updateRemote())}\n`);
+    else process.stdout.write(`${JSON.stringify(await service.previewRemoteUpdate())}\n`);
     return;
   }
   if (options.command === "remote-resolve") {
