@@ -18,6 +18,7 @@ interface CommandOptions {
   stateRoot: string;
   dryRun: boolean;
   yes: boolean;
+  skillsPath?: string;
 }
 
 function usage(): string {
@@ -29,6 +30,7 @@ function usage(): string {
     "  --state-root <path>           Local Skillset state directory.",
     "  --dry-run                     Show synchronization actions without writing.",
     "  --yes                         Confirm a destructive operation.",
+    "  --skills-path <path>          Relative Skill root in a Remote Skills Repository.",
   ].join("\n");
 }
 
@@ -89,12 +91,19 @@ function parseOptions(arguments_: string[]): CommandOptions {
   let stateRoot = defaultStateRoot(environment);
   let dryRun = false;
   let yes = false;
+  let skillsPath: string | undefined;
 
   const values: string[] = [];
   for (let index = 0; index < rawArguments.length; index += 1) {
     const argument = rawArguments[index];
     if (argument === "--dry-run") { dryRun = true; continue; }
     if (argument === "--yes") { yes = true; continue; }
+    if (argument === "--skills-path") {
+      skillsPath = rawArguments[index + 1];
+      if (!skillsPath) throw new Error(usage());
+      index += 1;
+      continue;
+    }
     if (argument !== "--environment" && argument !== "--state-root") {
       values.push(argument);
       continue;
@@ -119,7 +128,7 @@ function parseOptions(arguments_: string[]): CommandOptions {
   }
 
   const command = resolveCommand(topLevelCommand, values);
-  return { command, values: command.startsWith("skills-") || command.startsWith("agents-") || command.startsWith("remote-") ? values.slice(1) : values, environment, stateRoot, dryRun, yes };
+  return { command, values: command.startsWith("skills-") || command.startsWith("agents-") || command.startsWith("remote-") ? values.slice(1) : values, environment, stateRoot, dryRun, yes, skillsPath };
 }
 
 function resolveCommand(
@@ -162,7 +171,7 @@ export async function runCli(arguments_: string[]): Promise<void> {
   const adapters = defaultSkillDiscoveryAdapters();
   if (options.command === "remote-configure") {
     if (options.values.length !== 1) throw new Error("remote configure requires one repository URL or path.");
-    process.stdout.write(`${JSON.stringify(await service.configureRemote(options.values[0]))}\n`);
+    process.stdout.write(`${JSON.stringify(await service.configureRemote(options.values[0], options.skillsPath))}\n`);
     return;
   }
   if (options.command === "remote-list") {

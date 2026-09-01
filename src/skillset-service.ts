@@ -66,6 +66,7 @@ export interface RemoteStatus {
   url: string;
   revision: string;
   sourcePath: string;
+  skillsPath: string;
 }
 
 interface LocalSkillsetConfiguration {
@@ -255,17 +256,17 @@ export class SkillsetService {
     return (await this.readConfiguration()).targetAgentIds;
   }
 
-  public async configureRemote(url: string): Promise<RemoteStatus> {
+  public async configureRemote(url: string, skillsPath = "."): Promise<RemoteStatus> {
     const configuration = await this.readConfiguration();
     if (configuration.remote) throw new Error("A Remote Skills Repository is already configured. Reset it before configuring another.");
     const sourcePath = path.join(this.options.stateRoot, "remote-source");
     await runGit(["clone", "--quiet", url, sourcePath]);
     const revision = await gitRevision(sourcePath);
-    const remote = { url, revision, sourcePath };
+    const remote = { url, revision, sourcePath, skillsPath: normalizeRemoteSkillsPath(skillsPath) };
     const shared = await readConfigurationFile(path.join(sourcePath, "skillset.json")).catch((error: unknown) => isMissingFile(error) ? undefined : Promise.reject(error));
-    const skills = await this.discoverSkills([{ id: "remote", skillDirectories: [sourcePath] }]);
+    const skills = await this.discoverSkills([{ id: "remote", skillDirectories: [remoteSkillRoot(remote)] }]);
     const selectedSkills = shared
-      ? hydrateRemoteSkills(shared.selectedSkills, sourcePath)
+      ? hydrateRemoteSkills(shared.selectedSkills, remoteSkillRoot(remote))
       : skills.map((skill) => ({ identity: skill.identity, source: "remote" as const }));
     await this.writeConfiguration({ ...configuration, ...shared, selectedSkills, remote });
     const committedRemote = { ...remote, revision: await gitRevision(sourcePath) };
@@ -297,7 +298,7 @@ export class SkillsetService {
       throw new Error("Remote update requires a review of the current revision. Run `remote update` without --yes, review its summary, then confirm with --yes.");
     }
     await runGit(["reset", "--hard", availableRevision], configuration.remote.sourcePath);
-    const candidates = await this.discoverSkills([{ id: "remote", skillDirectories: [configuration.remote.sourcePath] }]);
+    const candidates = await this.discoverSkills([{ id: "remote", skillDirectories: [remoteSkillRoot(configuration.remote)] }]);
     const candidatesByName = new Map(candidates.map((candidate) => [candidate.identity.name, candidate]));
     const missing = configuration.selectedSkills.filter((skill) => skill.identity.sourcePath.startsWith(configuration.remote!.sourcePath) && !candidatesByName.has(skill.identity.name));
     const unresolved = missing.filter((skill) => !configuration.missingSourceResolutions[identityKey(skill.identity)]);
@@ -507,7 +508,7 @@ export class SkillsetService {
       const shared: LocalSkillsetConfiguration = {
         ...configuration,
         remote: { ...configuration.remote, sourcePath: "." },
-        selectedSkills: configuration.selectedSkills.map((skill) => skill.source === "remote" ? { ...skill, identity: { ...skill.identity, sourcePath: skill.identity.name } } : skill),
+        selectedSkills: configuration.selectedSkills.map((skill) => skill.source === "remote" ? { ...skill, identity: { ...skill.identity, sourcePath: path.relative(remoteSkillRoot(configuration.remote!), skill.identity.sourcePath) } } : skill),
       };
       await writeFile(path.join(configuration.remote.sourcePath, "skillset.json"), `${JSON.stringify(shared, null, 2)}\n`, "utf8");
       await commitSharedConfiguration(configuration.remote.sourcePath);
@@ -590,7 +591,19 @@ function hydrateRemoteSkills(skills: SelectedSkill[], sourcePath: string): Selec
 }
 
 function isRemoteStatus(value: unknown): value is RemoteStatus {
-  return typeof value === "object" && value !== null && "url" in value && "revision" in value && "sourcePath" in value;
+  return typeof value === "object" && value !== null && "url" in value && "revision" in value && "sourcePath" in value && "skillsPath" in value;
+}
+
+function normalizeRemoteSkillsPath(skillsPath: string): string {
+  const normalized = path.posix.normalize(skillsPath.replaceAll("\\", "/"));
+  if (path.posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) {
+    throw new Error("--skills-path must be a relative path inside the Remote Skills Repository.");
+  }
+  return normalized === "." ? "." : normalized.replace(/\/$/, "");
+}
+
+function remoteSkillRoot(remote: RemoteStatus): string {
+  return path.join(remote.sourcePath, ...remote.skillsPath.split("/"));
 }
 
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {

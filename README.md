@@ -45,4 +45,24 @@ Use `--environment windows|wsl` and `--state-root <path>` to inspect a specific 
 
 `skillset remote configure <url-or-path>` configures a Remote Skills Repository through Git and selects its current Skills. `remote list` shows the recorded revision. `remote update` prints a human-readable commit summary; repeat it with `--yes` to accept the update. When a selected remote Skill disappears, use `remote resolve <name> <remove|retain>` once to record its resolution.
 
+### Remote Skills Repository format
+
+The configured Skill root must contain one directory per Skill, each with a `SKILL.md` file:
+
+```text
+<Skill root>/<skill-name>/SKILL.md
+```
+
+By default, the repository root is the Skill root:
+
+```powershell
+skillset remote configure https://github.com/example/skills.git
+```
+
+Use `--skills-path <relative-path>` when Skills live beneath a directory in the repository. The path must stay inside the cloned repository. For example, the `penhin/shared-agent-skills` layout is `.agents/skills/<skill-name>/SKILL.md`, so configure it with:
+
+```powershell
+skillset remote configure https://github.com/penhin/shared-agent-skills.git --skills-path .agents/skills
+```
+
 `skillset status` is read-only and reports each selected target as available or unavailable, then classifies Skills as managed, Local, missing, or drifted. `sync --dry-run` prints its plan without writing. `sync` asks `y/N` before deployment; `sync --yes` is suitable for automation. Synchronization snapshots a same-named Local Skill before replacement, keeps unrelated Local Skills, and retains successful target updates if another target fails. `reset` follows the same confirmation path and restores snapshots for all Managed Skills.
