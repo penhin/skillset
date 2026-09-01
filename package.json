@@ -1,10 +1,36 @@
 {
-  "name": "skillset",
+  "name": "@penhin/skillset",
   "version": "0.1.0",
-  "private": true,
+  "description": "A local CLI for configuring shared agent skills across coding agents.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "skillset": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/penhin/skillset.git"
+  },
+  "bugs": {
+    "url": "https://github.com/penhin/skillset/issues"
+  },
+  "homepage": "https://github.com/penhin/skillset#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "skills",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
